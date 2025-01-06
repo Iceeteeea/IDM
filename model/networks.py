@@ -85,7 +85,7 @@ def define_G(opt):
     model_opt = opt['model']
 
     if model_opt['which_model_G'] == 'sr3':
-        from .sr3_modules import diffusion, unet, edsr, mlp
+        from .sr3_modules import diffusion, unet, edsr, mlp, nafnet
     if ('norm_groups' not in model_opt['unet']) or model_opt['unet']['norm_groups'] is None:
         model_opt['unet']['norm_groups']=32 # 32
     model = unet.UNet(
@@ -99,14 +99,15 @@ def define_G(opt):
         dropout=model_opt['unet']['dropout'],
         image_size=model_opt['diffusion']['image_size']
     )
-    encoder = edsr.EDSR(n_resblocks=16, n_feats=64, res_scale=1,scale=8, no_upsampling=False, rgb_range=1)
-
+    # encoder = edsr.EDSR(n_resblocks=16, n_feats=64, res_scale=1,scale=8, no_upsampling=False, rgb_range=1)
+    encoder = nafnet.NAFNet(img_channel=3, width=64, middle_blk_num=1, enc_blk_nums=[2, 2, 2, 4], dec_blk_nums=[2, 2, 2, 2], no_upsampling=False, scale=8, rgb_range=1)
+    print("NAFNet")
     imnet = mlp.MLP(in_dim=64+2, out_dim=3, hidden_list=[256, 256, 256, 256])
 
     netG = diffusion.GaussianDiffusion(
     encoder,
     imnet,
-    model,
+    denoise_fn=model,
     image_size=model_opt['diffusion']['image_size'],
     channels=model_opt['diffusion']['channels'],
     loss_type='l1',    # L1 or L2

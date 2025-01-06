@@ -87,7 +87,6 @@ def load_resume_state(opt):
         check_resume(opt, resume_state['iter'])
     return resume_state
 
-
 def train_pipeline(root_path):
     # parse options, set distributed setting, set ramdom seed
     opt = parse_options(root_path, is_train=True)

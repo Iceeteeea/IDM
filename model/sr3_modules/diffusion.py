@@ -97,7 +97,7 @@ class GaussianDiffusion(nn.Module):
         self.image_size = image_size
         self.encoder = encoder
         self.imnet = imnet
-        self.denoise_fn = denoise_fn
+        self.denoise_fn = denoise_fn # Unet
         self.loss_type = loss_type
         self.conditional = conditional
         self.feat_unfold = feat_unfold

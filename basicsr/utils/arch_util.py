@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# Copyright (c) 2022 megvii-model. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from BasicSR (https://github.com/xinntao/BasicSR)
+# Copyright 2018-2020 BasicSR Authors
+# ------------------------------------------------------------------------
 import math
 import torch
 from torch import nn as nn
@@ -5,9 +11,15 @@ from torch.nn import functional as F
 from torch.nn import init as init
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from basicsr.ops.dcn import ModulatedDeformConvPack, modulated_deform_conv
 from basicsr.utils import get_root_logger
 
+# try:
+#     from basicsr.models.ops.dcn import (ModulatedDeformConvPack,
+#                                         modulated_deform_conv)
+# except ImportError:
+#     # print('Cannot import dcn. Ignore this warning if dcn is not used. '
+#     #       'Otherwise install BasicSR with compiling dcn.')
+#
 
 @torch.no_grad()
 def default_init_weights(module_list, scale=1, bias_fill=0, **kwargs):
@@ -105,11 +117,16 @@ class Upsample(nn.Sequential):
             m.append(nn.Conv2d(num_feat, 9 * num_feat, 3, 1, 1))
             m.append(nn.PixelShuffle(3))
         else:
-            raise ValueError(f'scale {scale} is not supported. ' 'Supported scales: 2^n and 3.')
+            raise ValueError(f'scale {scale} is not supported. '
+                             'Supported scales: 2^n and 3.')
         super(Upsample, self).__init__(*m)
 
 
-def flow_warp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corners=True):
+def flow_warp(x,
+              flow,
+              interp_mode='bilinear',
+              padding_mode='zeros',
+              align_corners=True):
     """Warp an image or feature map with optical flow.
 
     Args:
@@ -128,7 +145,9 @@ def flow_warp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corne
     assert x.size()[-2:] == flow.size()[1:3]
     _, _, h, w = x.size()
     # create mesh grid
-    grid_y, grid_x = torch.meshgrid(torch.arange(0, h).type_as(x), torch.arange(0, w).type_as(x))
+    grid_y, grid_x = torch.meshgrid(
+        torch.arange(0, h).type_as(x),
+        torch.arange(0, w).type_as(x))
     grid = torch.stack((grid_x, grid_y), 2).float()  # W(x), H(y), 2
     grid.requires_grad = False
 
@@ -137,13 +156,22 @@ def flow_warp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corne
     vgrid_x = 2.0 * vgrid[:, :, :, 0] / max(w - 1, 1) - 1.0
     vgrid_y = 2.0 * vgrid[:, :, :, 1] / max(h - 1, 1) - 1.0
     vgrid_scaled = torch.stack((vgrid_x, vgrid_y), dim=3)
-    output = F.grid_sample(x, vgrid_scaled, mode=interp_mode, padding_mode=padding_mode, align_corners=align_corners)
+    output = F.grid_sample(
+        x,
+        vgrid_scaled,
+        mode=interp_mode,
+        padding_mode=padding_mode,
+        align_corners=align_corners)
 
     # TODO, what if align_corners=False
     return output
 
 
-def resize_flow(flow, size_type, sizes, interp_mode='bilinear', align_corners=False):
+def resize_flow(flow,
+                size_type,
+                sizes,
+                interp_mode='bilinear',
+                align_corners=False):
     """Resize a flow according to ratio or shape.
 
     Args:
@@ -169,7 +197,8 @@ def resize_flow(flow, size_type, sizes, interp_mode='bilinear', align_corners=Fa
     elif size_type == 'shape':
         output_h, output_w = sizes[0], sizes[1]
     else:
-        raise ValueError(f'Size type should be ratio or shape, but got type {size_type}.')
+        raise ValueError(
+            f'Size type should be ratio or shape, but got type {size_type}.')
 
     input_flow = flow.clone()
     ratio_h = output_h / flow_h
@@ -177,7 +206,10 @@ def resize_flow(flow, size_type, sizes, interp_mode='bilinear', align_corners=Fa
     input_flow[:, 0, :, :] *= ratio_w
     input_flow[:, 1, :, :] *= ratio_h
     resized_flow = F.interpolate(
-        input=input_flow, size=(output_h, output_w), mode=interp_mode, align_corners=align_corners)
+        input=input_flow,
+        size=(output_h, output_w),
+        mode=interp_mode,
+        align_corners=align_corners)
     return resized_flow
 
 
@@ -201,41 +233,33 @@ def pixel_unshuffle(x, scale):
     return x_view.permute(0, 1, 3, 5, 2, 4).reshape(b, out_channel, h, w)
 
 
-class DCNv2Pack(ModulatedDeformConvPack):
-    """Modulated deformable conv for deformable alignment.
+# class DCNv2Pack(ModulatedDeformConvPack):
+#     """Modulated deformable conv for deformable alignment.
+#
+#     Different from the official DCNv2Pack, which generates offsets and masks
+#     from the preceding features, this DCNv2Pack takes another different
+#     features to generate offsets and masks.
+#
+#     Ref:
+#         Delving Deep into Deformable Alignment in Video Super-Resolution.
+#     """
+#
+#     def forward(self, x, feat):
+#         out = self.conv_offset(feat)
+#         o1, o2, mask = torch.chunk(out, 3, dim=1)
+#         offset = torch.cat((o1, o2), dim=1)
+#         mask = torch.sigmoid(mask)
+#
+#         offset_absmean = torch.mean(torch.abs(offset))
+#         if offset_absmean > 50:
+#             logger = get_root_logger()
+#             logger.warning(
+#                 f'Offset abs mean is {offset_absmean}, larger than 50.')
+#
+#         return modulated_deform_conv(x, offset, mask, self.weight, self.bias,
+#                                      self.stride, self.padding, self.dilation,
+#                                      self.groups, self.deformable_groups)
 
-    Different from the official DCNv2Pack, which generates offsets and masks
-    from the preceding features, this DCNv2Pack takes another different
-    features to generate offsets and masks.
-
-    Ref:
-        Delving Deep into Deformable Alignment in Video Super-Resolution.
-    """
-
-    def forward(self, x, feat):
-        out = self.conv_offset(feat)
-        o1, o2, mask = torch.chunk(out, 3, dim=1)
-        offset = torch.cat((o1, o2), dim=1)
-        mask = torch.sigmoid(mask)
-
-        offset_absmean = torch.mean(torch.abs(offset))
-        if offset_absmean > 50:
-            logger = get_root_logger()
-            logger.warning(f'Offset abs mean is {offset_absmean}, larger than 50.')
-
-        return modulated_deform_conv(x, offset, mask, self.weight, self.bias, self.stride, self.padding, self.dilation,
-                                     self.groups, self.deformable_groups)
-
-class LayerNorm2d(nn.Module):
-
-    def __init__(self, channels, eps=1e-6):
-        super(LayerNorm2d, self).__init__()
-        self.register_parameter('weight', nn.Parameter(torch.ones(channels)))
-        self.register_parameter('bias', nn.Parameter(torch.zeros(channels)))
-        self.eps = eps
-
-    def forward(self, x):
-        return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
 class LayerNormFunction(torch.autograd.Function):
 
@@ -263,3 +287,64 @@ class LayerNormFunction(torch.autograd.Function):
         gx = 1. / torch.sqrt(var + eps) * (g - y * mean_gy - mean_g)
         return gx, (grad_output * y).sum(dim=3).sum(dim=2).sum(dim=0), grad_output.sum(dim=3).sum(dim=2).sum(
             dim=0), None
+
+class LayerNorm2d(nn.Module):
+
+    def __init__(self, channels, eps=1e-6):
+        super(LayerNorm2d, self).__init__()
+        self.register_parameter('weight', nn.Parameter(torch.ones(channels)))
+        self.register_parameter('bias', nn.Parameter(torch.zeros(channels)))
+        self.eps = eps
+
+    def forward(self, x):
+        return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
+
+# handle multiple input
+class MySequential(nn.Sequential):
+    def forward(self, *inputs):
+        for module in self._modules.values():
+            if type(inputs) == tuple:
+                inputs = module(*inputs)
+            else:
+                inputs = module(inputs)
+        return inputs
+
+import time
+def measure_inference_speed(model, data, max_iter=200, log_interval=50):
+    model.eval()
+
+    # the first several iterations may be very slow so skip them
+    num_warmup = 5
+    pure_inf_time = 0
+    fps = 0
+
+    # benchmark with 2000 image and take the average
+    for i in range(max_iter):
+
+        torch.cuda.synchronize()
+        start_time = time.perf_counter()
+
+        with torch.no_grad():
+            model(*data)
+
+        torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start_time
+
+        if i >= num_warmup:
+            pure_inf_time += elapsed
+            if (i + 1) % log_interval == 0:
+                fps = (i + 1 - num_warmup) / pure_inf_time
+                print(
+                    f'Done image [{i + 1:<3}/ {max_iter}], '
+                    f'fps: {fps:.1f} img / s, '
+                    f'times per image: {1000 / fps:.1f} ms / img',
+                    flush=True)
+
+        if (i + 1) == max_iter:
+            fps = (i + 1 - num_warmup) / pure_inf_time
+            print(
+                f'Overall fps: {fps:.1f} img / s, '
+                f'times per image: {1000 / fps:.1f} ms / img',
+                flush=True)
+            break
+    return fps
